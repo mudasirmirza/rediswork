@@ -28,4 +28,4 @@ I am fairly new in GoLang :) and this is the best I can come up with.
 
 - Delete old connection to redis server, redis server usually never kills client connections, so this can be handy
 
-`./main --checkConnAge=true -srcRedisHost=localhost:6379 -delOldConnAge=2 -delOldConnIdle=2 -delOldConn=true`
+`./main -checkConnAge=true -srcRedisHost=localhost:6379 -delOldConnAge=2 -delOldConnIdle=2 -delOldConn=true`
