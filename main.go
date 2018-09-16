@@ -95,7 +95,6 @@ func keyInfo(c *redis.Client, inputCh <-chan []string, outputCh chan<- string, a
 		var keys []string
 		keys = <- inputCh
 		for _, v := range keys {
-			globalCounter++
 			t, err := c.ObjectIdleTime(v).Result()
 			check(err)
 			if t.Seconds() >= age {
@@ -134,14 +133,21 @@ func delKeys(c *redis.Client, ch <-chan string, n int64, b bool) {
 
 // Func to migrate keys from source to destination
 func copyKey(s *redis.Client, d *redis.Client, ch <-chan []string, t time.Time, n int64) {
+
 	for {
+
+		// Creating redis pipeline, to perform bulk action
 		pd := d.Pipeline()
+
+		// This is used to measure how many keys have been added in pipeline to take action on
+		// Later we compare this to parameter `n` which is the amount of keys to be deleted when in pipeline
 		i := int64(0)
 
 		for _, v := range <-ch {
 
-			// init a value to hold the key data
+			// variable to store key data fetched from redis
 			var data string
+
 			//var ttl time.Duration = 0 * time.Millisecond
 			
 			data = s.Dump(v).Val()
@@ -158,7 +164,8 @@ func copyKey(s *redis.Client, d *redis.Client, ch <-chan []string, t time.Time, 
 			if i >= n {
 				_, err := pd.Exec()
 				// when restoring, if key already present it gives error
-				// ERR Target key name is busy, so this is a hack around it until I learn how to compare errors
+				// ERR Target key name is busy <- len 28
+				// so this is a hack around it until I learn how to compare errors
 				if err == nil || len(err.Error()) != 28 {
 					check(err)
 				}
@@ -166,9 +173,11 @@ func copyKey(s *redis.Client, d *redis.Client, ch <-chan []string, t time.Time, 
 				if err == nil {
 					// increment global key counter
 					globalCounter = globalCounter + i
+
+					// This clears the screen and prints the copied key count
 					tm.Flush()
 					tm.Clear()
-					tm.Printf("\x0cRestored %d keys in %v time", globalCounter, time.Since(t))
+					tm.Printf("\x0cCopied %d keys in %v time", globalCounter, time.Since(t))
 				}
 			}
 			i++
@@ -177,6 +186,7 @@ func copyKey(s *redis.Client, d *redis.Client, ch <-chan []string, t time.Time, 
 }
 
 // Func to check client connection details
+// Returns a slice of output of `CLIENT LIST` redis command
 func clientConnDetails(s *redis.Client) []string {
 	var clientList string
 	clientList, _ = s.ClientList().Result()
@@ -197,7 +207,7 @@ func clientConnDetails(s *redis.Client) []string {
 
 // Func to parse client connection details and return []string of addr:port after checking the age and idle time with provided arguments
 func parseClientConn(s []string, connAge int64, connIdle int64) []string {
-	//panic("Not implemented")
+
 	pattern := `addr=(?P<addr>.*) fd=.* age=(?P<age>.*) idle=(?P<idle>.*) flags=.*`
 	patternMetadata := regexp.MustCompile(pattern)
 	var connectionList []string
@@ -238,7 +248,7 @@ func parseClientConn(s []string, connAge int64, connIdle int64) []string {
 func deleteClientConn(s *redis.Client, c []string){
 	for _, v := range c {
 		res := s.ClientKill(v)
-		fmt.Println("Connection deleted: ", res)
+		fmt.Println("Connection killed: ", res)
 	}
 }
 
