@@ -14,7 +14,7 @@ import (
 
 // this is -1ms to check ttl value before restoring
 // restore doesnt take -1 as ttl value
-var td time.Duration = -1 * time.Millisecond
+var ttl = 0 * time.Millisecond
 
 // counter for number of keys migrated
 var globalCounter int64
@@ -142,25 +142,34 @@ func copyKey(s *redis.Client, d *redis.Client, ch <-chan []string, t time.Time, 
 
 			// init a value to hold the key data
 			var data string
-			var ttl time.Duration
+			//var ttl time.Duration = 0 * time.Millisecond
 			
 			data = s.Dump(v).Val()
-			ttl = s.PTTL(v).Val()
-
+			// TODO: optimize copying TTL, currently taking allot of time and resources
+			//ttl = s.PTTL(v).Val()
 			// ttl -1ms is not allowed in restore
-			if ttl == td {
-				ttl = time.Millisecond * 0
-			}
+			//if ttl == td {
+				//ttl = time.Millisecond * 0
+			//}
 
-			// set on destination
+			// restore on destination
 			pd.Restore(v, ttl, data)
 
 			if i >= n {
-				// increment global key counter
 				_, err := pd.Exec()
-				check(err)
-				globalCounter = globalCounter + i
-				fmt.Println("Restoring ", globalCounter, " keys in time ", time.Since(t))
+				// when restoring, if key already present it gives error
+				// ERR Target key name is busy, so this is a hack around it until I learn how to compare errors
+				if err == nil || len(err.Error()) != 28 {
+					check(err)
+				}
+
+				if err == nil {
+					// increment global key counter
+					globalCounter = globalCounter + i
+					tm.Flush()
+					tm.Clear()
+					tm.Printf("\x0cRestored %d keys in %v time", globalCounter, time.Since(t))
+				}
 			}
 			i++
 		}
@@ -240,7 +249,10 @@ func connectSrcRedis(r string, p int) *redis.Client {
 		Password: "",
 		DB: p,
 		MaxRetries: 5,
-		ReadTimeout: time.Minute,
+		ReadTimeout: 5 * time.Minute,
+		IdleTimeout: 5 * time.Minute,
+		MinIdleConns: 5,
+		PoolSize: 100,
 	})
 }
 
@@ -251,7 +263,10 @@ func connectDstRedis(r string, p int) *redis.Client {
 		Password: "",
 		DB: p,
 		MaxRetries: 5,
-		ReadTimeout: time.Minute,
+		ReadTimeout: 5 * time.Minute,
+		IdleTimeout: 5 * time.Minute,
+		MinIdleConns: 5,
+		PoolSize: 100,
 	})
 }
 
@@ -303,7 +318,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	tm.Flush()
+	tm.Clear()
 	fmt.Println("Executing...")
 
 	s := connectSrcRedis(*srcRedisHost, *srcRedisDB)
@@ -325,16 +340,20 @@ func main() {
 	}
 
 	// channel for scan and getting key info
-	ch := make(chan []string, 10)
+	ch := make(chan []string, 50)
 
 	// after key info, if sixty day condition match, put keys in this channel
-	och := make(chan string, 10)
+	och := make(chan string, 50)
 
 	if *copyKeys == true || *deleteKeys == true || *printKeys == true || *checkOldKey == true {
 		go scanKeys(s, ch, *scanCount, *keyMatch)
 	}
 
 	if *copyKeys == true {
+		if *copyKeyCount < *scanCount {
+			fmt.Println("scanCount can not be less than copyKeyCount")
+			os.Exit(1)
+		}
 		start := time.Now()
 		d := connectDstRedis(*dstRedisHost, *dstRedisDB)
 		defer d.Close()
